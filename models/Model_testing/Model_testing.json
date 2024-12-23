@@ -1,0 +1,19 @@
+{
+  "model_name": "Model_testing",
+  "batch_size": 128,
+  "start_learning_rate": 0.001,
+  "end_learning_rate": 0.0001,
+  "epochs": 5,
+  "step_size": 20,
+  "wavelength_min": 3600,
+  "wavelength_max": 9200,
+  "delta_loglamd": 0.0001,
+  "z_max": 5,
+  "z_min": -0.01,
+  "poly_deg": 5,
+  "egienV_num": 10,
+  "SNR_thr": 0.0,
+  "dropout": 0.0,
+  "output_pth": "models/Model_testing/Model_testing.pth",
+  "output_csv": "models/Model_testing/Model_testing.csv"
+}

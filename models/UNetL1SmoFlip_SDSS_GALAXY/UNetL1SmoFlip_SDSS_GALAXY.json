@@ -1,0 +1,19 @@
+{
+  "model_name": "UNetL1SmoFlip_SDSS_GALAXY",
+  "batch_size": 128,
+  "start_learning_rate": 0.001,
+  "end_learning_rate": 0.0001,
+  "epochs": 100,
+  "step_size": 20,
+  "wavelength_min": 3600,
+  "wavelength_max": 9200,
+  "delta_loglamd": 0.0001,
+  "z_max": 1.5,
+  "z_min": 0,
+  "poly_deg": 5,
+  "egienV_num": 10,
+  "SNR_thr": 0.0,
+  "dropout": 0.0,
+  "output_pth": "models/UNetL1SmoFlip_SDSS_GALAXY/UNetL1SmoFlip_SDSS_GALAXY.pth",
+  "output_csv": "models/UNetL1SmoFlip_SDSS_GALAXY/UNetL1SmoFlip_SDSS_GALAXY.csv"
+}
