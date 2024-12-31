@@ -7,3 +7,5 @@ Code of GaSNet-III
 ### The train_data_3600_9200 folder contains a subset of training spectra.
 ### The **results** folder contains the prediction results.
 ### The **figures** folder contains all the figures.
+
+## If this code helps your research, please cite https://arxiv.org/abs/2412.21130
