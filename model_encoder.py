@@ -14,7 +14,6 @@ import json
 from pprint import pprint
 from astropy.io import fits
 from astropy.table import Table
-import read_spec
 
 
 if not os.path.exists('models'):
@@ -29,57 +28,23 @@ class MyDataset(Dataset):
         self.input_grid, self.output_grid = input_grid, output_grid
         self.delta_loglamd = self.output_grid[1] - self.output_grid[0]
         print(f'delta loglamd = {self.delta_loglamd}')
-
-        if 'model' in data.keys():
-            model = data['model']
-        else:
-            model = np.zeros_like(data['flux'])
-        if 'SUBCLASS' in data.keys():
-            self.SUBCLASS = data['SUBCLASS']
-        else:
-            self.SUBCLASS = data['SPECTYPE']
-
-        self.fluctuate, self.continuous, self.ivar, self.model = self.tranfomer(data['flux'], data['ivar'], model) # preprocess
-        self.Z = data['Z']
-        
-        print('Spec shape=', self.fluctuate.shape, self.ivar.shape, self.model.shape)
+        self.fluctuate, self.continuous, self.ivar = self.tranfomer(data['flux'], data['ivar']) # preprocess
+        print('Spec shape=', self.fluctuate.shape, self.ivar.shape)
         print('Spec type=', self.fluctuate.dtype, self.ivar.dtype)
-        # the corresponding shift or mask will be created
-        self.overlap_index = self.overlap()
 
     def __len__(self):
         return len(self.fluctuate)
+    
     def __getitem__(self, idx):
         if self.device == 'cpu':
-            fluctuate, ivar, model = self.fluctuate[idx], self.ivar[idx], self.model[idx]
+            fluctuate, ivar = self.fluctuate[idx], self.ivar[idx]
         else:
             fluctuate, ivar = self.fluctuate[idx].clone().detach().float(), self.ivar[idx].clone().detach().float()
-            model = self.model[idx].clone().detach().float()
-        return {'fluctuate':fluctuate, 'ivar':ivar, 'continuous':self.continuous[idx], 'model':model,
-                'Z':self.Z[idx], 'SUBCLASS': self.SUBCLASS[idx], 'overlap_index': self.overlap_index[idx]}
-
-    # finding the overlap part in observed and rest frame spectrum, and corresbonding indexs.
-    def overlap(self):
-        # rest-frame wavelength of input spectrum
-        loglamd0 = -np.log10(1+self.Z)+ self.input_grid[0]
-        loglamd1 = -np.log10(1+self.Z) + self.input_grid[-1]
-        # overlap part in the output spectrum
-        overlap_loglamd0 = np.clip(loglamd0, a_min=self.output_grid[0], a_max=None)
-        overlap_loglamd1 = np.clip(loglamd1, a_min=None, a_max=self.output_grid[-1])
-        # calculate the overlap input spectrum index
-        output_index0 = np.round((overlap_loglamd0 - self.output_grid[0])/self.delta_loglamd).astype('int')
-        output_index1 = np.round((overlap_loglamd1 - self.output_grid[0])/self.delta_loglamd).astype('int') + 1
-        # calculate the overlap output spectrum index
-        input_dim = len(self.input_grid)
-        input_index0 = np.clip(np.round((self.output_grid[0]-loglamd0)/self.delta_loglamd), a_min=0, a_max=input_dim).astype('int')
-        input_index1 = input_index0 +  (output_index1 - output_index0)
-        
-        input_index0, input_index1, output_index0, output_index1 = input_index0.reshape(-1, 1), input_index1.reshape(-1, 1), output_index0.reshape(-1, 1), output_index1.reshape(-1, 1)
-        return np.concatenate([input_index0, input_index1, output_index0, output_index1], axis=-1)
+        return {'fluctuate':fluctuate, 'ivar':ivar, 'continuous':self.continuous[idx]}
 
     
     # transformation of data
-    def tranfomer(self, flux, ivar, model):
+    def tranfomer(self, flux, ivar):
         # Normalization
         dim = len(self.input_grid)
         input_grid = self.input_grid
@@ -93,12 +58,7 @@ class MyDataset(Dataset):
         Norm = np.mean(fluctuate**2,axis=-1)**(0.5)
         Norm = Norm.reshape(-1,1)
         fluctuate = fluctuate/Norm
-        model = (model-continuous)/Norm
         ivar = ivar*Norm**2
-        #=== sdss model
-        model = torch.from_numpy(model)
-        model = model.view(len(model),1,len(model[0]))
-        model = model.to(self.device)
         #===
         fluctuate = torch.from_numpy(fluctuate)
         fluctuate = fluctuate.view(len(fluctuate),1,len(fluctuate[0]))
@@ -107,7 +67,7 @@ class MyDataset(Dataset):
         ivar = torch.from_numpy(ivar)  # transfer to tensor
         ivar = ivar.view(len(ivar),1,len(ivar[0]))
         ivar = ivar.to(self.device) # to GPU
-        return fluctuate, continuous, ivar, model
+        return fluctuate, continuous, ivar
 
 
 
@@ -145,26 +105,6 @@ class Network(nn.Module):
         return x, coef_vec, self.eigenvectors
 
 
-# loss function
-class Chi2Loss(nn.Module):
-    def __init__(self):
-        super(Chi2Loss, self).__init__()
-
-    def forward(self, data, output):
-        input, ivar, overlap_index = data['fluctuate'], data['ivar'], data['overlap_index']
-        chi_square_loss = []
-        for i, index in zip(range(len(overlap_index)), overlap_index):
-            one_input  = input[i, 0:1, index[0]:index[1]]
-            one_ivar = ivar[i, 0:1, index[0]:index[1]]
-            one_output = output[i, 0:1, index[2]:index[3]]
-            temp_chi =  torch.mean((one_input-one_output)**2*one_ivar,-1)
-            chi_square_loss.append(temp_chi)
-        chi_square_loss = torch.cat(chi_square_loss, dim=0)
-        chi_square_loss = torch.mean(chi_square_loss, dim=-1)
-        loss =  chi_square_loss.mean()
-        return loss
-
-
 class GaSNet3:
     """
     Initialize, one shold set the wavelength_min, wavelength_max, output_label, and the name of model.
@@ -172,8 +112,7 @@ class GaSNet3:
     def __init__(self):
         
         self.device = torch.device('cuda:2')
-        self.cfg = {
-                    'model_name': 'GaSNet3',
+        self.cfg = {'model_name': 'GaSNet3',
                     'batch_size': 128,
                     'start_learning_rate': 1e-3,
                     'end_learning_rate': 1e-4,
@@ -193,16 +132,6 @@ class GaSNet3:
         self.valid_data = {}
         self.test_data =  {}
 
-
-    # save the training infomation
-    def logging(self, info):
-        print('Epoch [{}/{}], Train Loss: {:.4f}, Valid Loss: {:.4f}'.format(info['epoch']+1, self.cfg['epochs'], info['train_loss'], info['val_loss']))
-        self.history = pd.concat([self.history, pd.DataFrame([info])], ignore_index=True)
-        self.history.to_csv(self.cfg['output_csv']) 
-        # save the best one  checkpoint
-        if info['val_loss'] <= min(self.history['val_loss'].values):
-            torch.save(self.model.state_dict(), self.cfg['output_pth'])
-            print('save the best checkpoint of ', self.cfg['output_pth'])
 
     def Init(self, load_json=False, json_name=''):
         if not os.path.exists('models/'+self.cfg['model_name']):
@@ -227,84 +156,15 @@ class GaSNet3:
         self.output_grid = np.linspace(-self.input_dim*delta-np.log10(1+z_max), -np.log10(1+z_min), num=self.output_dim, endpoint=True) + np.log10(max_wave)
         print('egienspectrum dim:', self.output_dim, self.output_grid)
         
-        batch_size = self.cfg['batch_size']
-        if len(self.train_data) > 0:
-            self.train_data = self.train_data[self.train_data['SN_MEDIAN_ALL']>self.cfg['SNR_thr']]
-            print('Number of training data:', len(self.train_data))
-            self.train_dataset = MyDataset(self.train_data, self.input_grid, self.output_grid, self.device, self.cfg['poly_deg'])
-            self.train_loader = DataLoader(self.train_dataset, batch_size=batch_size)
-
-        if len(self.valid_data) > 0:
-            print('Number of validation data:', len(self.valid_data))
-            self.valid_dataset = MyDataset(self.valid_data, self.input_grid, self.output_grid, self.device, self.cfg['poly_deg'])
-            self.valid_loader = DataLoader(self.valid_dataset, batch_size=batch_size)
-
         model_name = self.cfg['model_name']
         self.history = pd.DataFrame(columns=['epoch', 'train_loss', 'val_loss', 'time', 'learning rate'])
         self.cfg['output_pth'] = f'models/{model_name}/{model_name}.pth'
         self.cfg['output_csv'] = self.cfg['output_pth'].replace('.pth','.csv')
-
-        # save the model setting from json
-        if load_json == False:
-            config_dict = self.cfg
-            name = self.cfg['model_name']
-            json_name = f'models/{name}/{name}.json'
-            with open(json_name, 'w') as json_file:
-                json.dump(config_dict, json_file, indent=2)
-
         self.json_name = json_name
 
     def model_loader(self):
         egienV_num = self.cfg['egienV_num']
         self.model = Network(self.input_dim, self.output_dim, egienV_num)
-        self.criterion = Chi2Loss()
-
-
-    # training function
-    def train(self):
-        self.model.train()
-        train_loss = 0
-        for data in tqdm(self.train_loader, desc='Training'):
-            self.optimizer.zero_grad()
-            output, coeff, eigenvectors = self.model(data)
-            loss = self.criterion(data, output)
-            loss.backward()
-            self.optimizer.step()
-            train_loss += loss.item() * len(output)
-        train_loss /= len(self.train_loader.dataset)
-        return train_loss
-
-    # validate function
-    def valid(self):
-        self.model.eval()
-        valid_loss  = 0
-        with torch.no_grad():
-            for data in tqdm(self.valid_loader, desc='Validation'):
-                output, coeff, eigenvectors = self.model(data)
-                loss = self.criterion(data, output)
-                valid_loss += loss.item() * len(output)
-        valid_loss /= len(self.valid_loader.dataset)
-        return valid_loss
-
-    #=== training loop
-    def training_loop(self):
-        self.model_loader()
-        print(self.model)
-        self.model = self.model.to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), self.cfg['start_learning_rate'])
-        gamma = (self.cfg['end_learning_rate']/self.cfg['start_learning_rate'])**(self.cfg['step_size']/self.cfg['epochs'])
-        scheduler = StepLR(self.optimizer, step_size=self.cfg['step_size'], gamma=gamma, verbose=True)
-
-        for epoch in range(self.cfg['epochs']):
-            start_time = time.time()
-            train_loss = self.train()
-            val_loss = self.valid()
-            scheduler.step()
-            end_time = time.time()
-            # save the history
-            info = {'epoch':epoch, 'train_loss': train_loss, 'val_loss':val_loss, 'time':end_time-start_time, 'learning rate': scheduler.get_lr()[0]}
-            self.logging(info)
-            print('learning rate', scheduler.get_lr())
 
     # correction of chi2_curev
     def corrected_square_curve(self, chi_square_curves):
@@ -323,7 +183,6 @@ class GaSNet3:
             constant = torch.sum(input_spetrum[i:i+1]**2 * ivar[i:i+1], dim=-1).unsqueeze(-1) #constant term
             constant = constant.repeat(1, 1, constant.shape[-1])
             corcorrelation = F.conv1d(output_spetrum[i:i+1], 2 * input_spetrum[i:i+1] * ivar[i:i+1], padding='same') # correlation term
-            
             curve = ivar_term + constant - corcorrelation
             curve = self.corrected_square_curve(curve)
             chi_square_curves.append(curve)
@@ -350,7 +209,7 @@ class GaSNet3:
         return min_chi_square, best_fit_z, Degeneracy
 
     # return the predict redshift and D,
-    def prediction(self, fname='None'):
+    def prediction(self, fname):
         # load data
         self.test_dataset = MyDataset(self.test_data, self.input_grid, self.output_grid, self.device, self.cfg['poly_deg'])
         self.test_loader = DataLoader(self.test_dataset, batch_size=self.cfg['batch_size'])
@@ -387,7 +246,6 @@ class GaSNet3:
         test_data = self.test_data
         #=== saving the results to fits
         test_data['Best_fit_z'] = np.array(Best_fit_z)
-        test_data['delta_z'] = np.abs(Best_fit_z-test_data['Z'])/(1+test_data['Z'])
         test_data['min_chi_square'] = np.array(min_chi_squares)
         test_data['Degeneracy'] = np.array(Degeneracies)
         test_data['coefficients'] = coefficients
@@ -395,38 +253,11 @@ class GaSNet3:
         results = test_data[:]
         del results['flux']
         del results['ivar']
-        del results['model']
         if 'reconstruction' in results.keys():
             del results['reconstruction']
             del results['chi_square_curve']
-        if fname == 'None':
-            fn = 'results/'+self.cfg['output_pth'].replace('.pth','_results.fits').rsplit('/')[-1]
-        else:
-            fn = f'results/{fname}.fits'
+        fn = f'results/{fname}.fits'
         self.save_as_fits(fn, results)
-
-        test_data['reconstruction'] = output_spectra
-        test_data['chi_square_curve'] = chi_square_curves
-
-        num = 20
-        if fname == 'None':
-            random_indx = np.random.randint(len(self.test_data), size=num)
-            sorted_indices = np.argsort(self.test_data['min_chi_square'])
-            large_chi_square_indx = sorted_indices[-num:]
-            sorted_indices = np.argsort(self.test_data['Degeneracy'])
-            small_degeneracy_indx = sorted_indices[:num]
-            save_index = np.concatenate([random_indx, large_chi_square_indx, small_degeneracy_indx], axis=-1)
-            examples = test_data[save_index]
-            fn = 'results/'+self.cfg['output_pth'].replace('.pth','_reconstruction_examples.fits').rsplit('/')[-1]
-        else:
-            examples = test_data[0:50]
-            fn = f'results/{fname}_reconstruction_examples.fits'
-        self.save_as_fits(fn, examples)
-        
-    def predict_one_spec(self, filename):
-        self.test_data, _, _, _ = read_spec.Get_One_Spectrum(filename)
-        self.prediction(fname='one_spec')
-        #self.test_data['fluctuate'] = self.test_data['reconstruction'][:,:,]
         
 
     # save as fits file
@@ -445,3 +276,5 @@ class GaSNet3:
         self.model.eval()
         eigenspec = self.model.eigenvectors
         return eigenspec.cpu().detach().numpy()
+    
+

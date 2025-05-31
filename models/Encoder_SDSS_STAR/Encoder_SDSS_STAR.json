@@ -10,8 +10,10 @@
   "delta_loglamd": 0.0001,
   "z_max": 0.005,
   "z_min": -0.005,
+  "poly_deg": 5,
   "egienV_num": 10,
   "SNR_thr": 0.0,
+  "dropout": 0.0,
   "output_pth": "models/Encoder_SDSS_STAR/Encoder_SDSS_STAR.pth",
   "output_csv": "models/Encoder_SDSS_STAR/Encoder_SDSS_STAR.csv"
 }
