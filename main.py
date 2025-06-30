@@ -55,14 +55,37 @@ def run_model(test_specta):
     print(data)
 
 
-def read_spec(file):
+def read_spec(file, survey='sdss'):
+    """
+    Read 1D spectrum from a FITS file for SDSS or LAMOST surveys.
+
+    Parameters:
+    ----------
+    file : str
+        Path to the FITS file containing the spectrum.
+    survey : str, optional
+        Survey name. Either 'sdss' or 'lamost'. Default is 'sdss'.
+
+    Returns:
+    -------
+    loglam : np.ndarray
+        Logarithm (base 10) of the wavelength array.
+    flux : np.ndarray
+        Flux array of the spectrum.
+    ivar : np.ndarray
+        Inverse variance (1 / sigma^2) of the flux array.
+    """
     info_dic = {}
     # ========= 可以重写这部分
-    hudl1 = Table.read(file,1)
-    if 'LOGLAM' in hudl1.keys():
-        loglam, flux, ivar = hudl1['LOGLAM'], hudl1['FLUX'], hudl1['IVAR']
-    else:
-        loglam, flux, ivar = hudl1['loglam'], hudl1['flux'], hudl1['ivar']
+    if survey == 'sdss':
+        hudl1 = Table.read(file,1)
+        if 'LOGLAM' in hudl1.keys():
+            loglam, flux, ivar = hudl1['LOGLAM'], hudl1['FLUX'], hudl1['IVAR']
+        else:
+            loglam, flux, ivar = hudl1['loglam'], hudl1['flux'], hudl1['ivar']
+    elif survey == 'lamost':
+        hudl1 = Table.read(file, 1)
+        loglam, flux, ivar = np.log10(hudl1['WAVELENGTH'][0]), hudl1['FLUX'][0], hudl1['IVAR'][0]
     # =========
     info_dic['flux'], info_dic['ivar'], info_dic['loglam'] = flux, ivar, loglam
     print(f'flux shape: {flux.shape}, ivar shape: {ivar.shape}, loglam shape: {loglam.shape}')
@@ -82,8 +105,9 @@ def main():
     # Get arguments from the command line
     parser = argparse.ArgumentParser(description="L1 coarse classifier")
     parser.add_argument("--fits", default="./spec/spec-0391-51782-0088.fits", help="fits file")
+    parser.add_argument("--survey", default="sdss", help="survey, 'sdss' or 'lamost'. Default is 'sdss'.")
     args = parser.parse_args()
-    spec = read_spec(args.fits)
+    spec = read_spec(args.fits, args.survey)
     result = run_model(spec)
     return result
 

@@ -22,6 +22,10 @@ Make sure Docker is running. The input should be an SDSS `.fits` file:
 docker run --rm gasnet3-app python main.py --fits ./spec/spec-0436-51883-0633.fits
 ```
 
+If the input is LAMOST fits file (the models are trained on SDSS spectra, so spectra from other surveys may result in lower accuracy):
+```bash
+docker run --rm gasnet3-app python main.py --fits ./spec/spec-57394-HD081205N465629M01_sp06-018.fits --survey lamost
+```
 ---
 
 ### 🛠️ Customize Input Parsing
@@ -36,13 +40,15 @@ The code will automatically crop the spectrum to the wavelength range $3600$–$
 
 ```python
 def read_spec(file):
-    info_dic = {}
-    # ======== Modify this section as needed
-    hudl1 = Table.read(file, 1)
-    if 'LOGLAM' in hudl1.keys():
-        loglam, flux, ivar = hudl1['LOGLAM'], hudl1['FLUX'], hudl1['IVAR']
-    else:
-        loglam, flux, ivar = hudl1['loglam'], hudl1['flux'], hudl1['ivar']
+    """
+    Read 1D spectrum from a FITS file for SDSS or LAMOST surveys.
+
+    Parameters:
+    ----------
+    file : str
+        Path to the FITS file containing the spectrum.
+    survey : str, optional
+        Survey name. Either 'sdss' or 'lamost'. Default is 'sdss'.
 ```
 
 ---
